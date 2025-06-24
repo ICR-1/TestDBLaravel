@@ -181,7 +181,141 @@ Setelah menjalankan migration dan seeder, Anda dapat memeriksa data di database 
 
 ### Masalah Umum dan Solusi
 
-#### 1. Error 500 Internal Server Error
+#### 1. Error Composer Version (composer-runtime-api ^2.2)
+
+**Penyebab:**
+- Hostinger menggunakan Composer 1.x yang deprecated
+- Laravel 12.x memerlukan Composer 2.x
+
+**Solusi A - Skip Composer Install (Recommended untuk Shared Hosting):**
+```bash
+# Upload vendor folder dari local development
+# Atau gunakan alternatif deployment tanpa composer install
+
+# Edit script deploy.sh, comment bagian composer install:
+# Buka file deploy.sh dan tambahkan # di depan baris composer install
+```
+
+**Solusi B - Upgrade Composer (jika memungkinkan):**
+```bash
+# Cek versi composer saat ini
+composer --version
+
+# Download composer 2.x (jika ada akses)
+curl -sS https://getcomposer.org/installer | php
+mv composer.phar /usr/local/bin/composer
+
+# Atau gunakan composer2 jika tersedia
+composer2 install --optimize-autoloader --no-dev
+```
+
+**Solusi C - Manual Upload Dependencies:**
+```bash
+# Di local development, jalankan:
+composer install --optimize-autoloader --no-dev
+
+# Upload seluruh folder vendor/ ke server via FTP/File Manager
+# Kemudian di server, skip bagian composer install
+```
+
+#### 2. Migration Hanging/Tidak Selesai
+
+**Penyebab:**
+- Koneksi database belum dikonfigurasi
+- File .env belum diisi dengan benar
+- Database belum dibuat di hPanel
+
+**Solusi:**
+```bash
+# 1. Pastikan database sudah dibuat di hPanel Hostinger
+# 2. Edit file .env dengan kredensial database yang benar
+nano .env
+
+# 3. Test koneksi database
+php artisan tinker
+# Dalam tinker, jalankan: DB::connection()->getPdo();
+# Jika berhasil, akan menampilkan PDO object
+
+# 4. Cek status migration
+php artisan migrate:status
+
+# 5. Jalankan migration satu per satu jika diperlukan
+php artisan migrate --step
+
+# 6. Jika masih error, reset dan migrate ulang
+php artisan migrate:reset
+php artisan migrate
+```
+
+#### 3. Script Deploy.sh Gagal
+
+**Modifikasi script untuk skip composer:**
+
+Buat file `deploy-no-composer.sh`:
+```bash
+#!/bin/bash
+
+echo "🚀 Memulai deployment Laravel untuk Hostinger (tanpa composer)..."
+
+# Cek apakah berada di direktori yang benar
+if [ ! -f "artisan" ]; then
+    echo "❌ Error: File artisan tidak ditemukan."
+    exit 1
+fi
+
+# Backup file .env jika ada
+if [ -f ".env" ]; then
+    echo "📄 Backup file .env..."
+    cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
+fi
+
+# Salin konfigurasi template jika .env tidak ada
+if [ ! -f ".env" ]; then
+    echo "📝 Membuat file .env dari template..."
+    cp hostinger-config.txt .env
+    echo "⚠️  PENTING: Edit file .env dengan informasi database Anda!"
+    echo "⏸️  BERHENTI - Edit .env dulu sebelum melanjutkan!"
+    exit 1
+fi
+
+# Skip composer install untuk shared hosting
+echo "⚠️  Skipping composer install (gunakan vendor dari local)"
+
+# Generate application key
+echo "🔑 Generate application key..."
+php artisan key:generate --force
+
+# Set permissions
+echo "🔐 Set file permissions..."
+chmod -R 755 storage bootstrap/cache
+chmod -R 777 storage/logs storage/framework
+
+# Clear dan cache konfigurasi
+echo "🧹 Clear cache..."
+php artisan config:clear
+php artisan route:clear
+php artisan view:clear
+php artisan cache:clear
+
+# Cache konfigurasi untuk production
+echo "⚡ Cache konfigurasi..."
+php artisan config:cache
+
+# Link storage
+echo "🔗 Create storage link..."
+php artisan storage:link
+
+echo ""
+echo "✅ Deployment selesai!"
+echo ""
+echo "📋 Langkah selanjutnya:"
+echo "1. Pastikan file .env sudah diisi dengan benar"
+echo "2. Test koneksi: php artisan tinker -> DB::connection()->getPdo();"
+echo "3. Jalankan: php artisan migrate"
+echo "4. Jalankan: php artisan db:seed"
+```
+
+#### 4. Error 500 Internal Server Error
 
 **Penyebab:**
 - File .env tidak dikonfigurasi dengan benar
@@ -202,17 +336,29 @@ php artisan config:clear
 php artisan cache:clear
 ```
 
-#### 2. Database Connection Error
+#### 5. Database Connection Error
 
 **Penyebab:**
 - Kredensial database salah
 - Database belum dibuat
 
 **Solusi:**
-- Periksa kembali informasi database di .env
-- Pastikan database sudah dibuat di hPanel
+```bash
+# 1. Periksa kredensial di hPanel Hostinger
+# 2. Edit file .env:
+DB_CONNECTION=mysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=u950839741_nama_database
+DB_USERNAME=u950839741_username
+DB_PASSWORD=password_anda
 
-#### 3. Migration Error
+# 3. Test koneksi
+php artisan tinker
+DB::connection()->getPdo();
+```
+
+#### 6. Migration Error
 
 **Solusi:**
 ```bash
@@ -226,7 +372,7 @@ php artisan migrate:rollback
 php artisan migrate
 ```
 
-#### 4. Permission Denied
+#### 7. Permission Denied
 
 **Solusi:**
 ```bash
@@ -239,6 +385,44 @@ find public_html -type f -exec chmod 644 {} \;
 find public_html -type d -exec chmod 755 {} \;
 chmod -R 777 storage
 ```
+
+## 🚨 **Panduan Khusus untuk Masalah Composer di Hostinger**
+
+### Metode 1: Upload Vendor Manual (Recommended)
+
+1. **Di komputer lokal:**
+   ```bash
+   composer install --optimize-autoloader --no-dev
+   ```
+
+2. **Upload folder vendor/** ke server via File Manager atau FTP
+
+3. **Di server, gunakan script tanpa composer:**
+   ```bash
+   chmod +x deploy-no-composer.sh
+   ./deploy-no-composer.sh
+   ```
+
+### Metode 2: Downgrade Laravel (jika diperlukan)
+
+Jika tetap ingin menggunakan Composer 1.x di server:
+
+1. **Edit composer.json** di local untuk kompatibilitas:
+   ```json
+   {
+       "require": {
+           "php": "^8.1",
+           "laravel/framework": "^10.0"
+       }
+   }
+   ```
+
+2. **Update dependencies:**
+   ```bash
+   composer update
+   ```
+
+3. **Upload ulang ke server**
 
 ## 📝 Perintah Artisan yang Berguna
 
